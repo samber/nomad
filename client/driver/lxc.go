@@ -50,20 +50,9 @@ type LxcDriver struct {
 
 // LxcDriverConfig is the configuration of the LXC Container
 type LxcDriverConfig struct {
-	Template             string
-	Distro               string
-	Release              string
-	Arch                 string
-	ImageVariant         string   "mapstructure:`image_variant`"
-	ImageServer          string   "mapstructure:`image_server`"
-	GPGKeyID             string   "mapstructure:`gpg_key_id`"
-	GPGKeyServer         string   "mapstructure:`gpg_key_server`"
-	DisableGPGValidation bool     "mapstructure:`disable_gpg`"
-	FlushCache           bool     "mapstructure:`flush_cache`"
-	ForceCache           bool     "mapstructure:`force_cache`"
-	TemplateArgs         []string "mapstructure:`template_args`"
-	LogLevel             string   `mapstructure:"log_level"`
-	Verbosity            string
+	ContainerArtifact string `mapstructure:"container_artifact"`
+	LogLevel          string `mapstructure:"log_level"`
+	Verbosity         string
 }
 
 // NewLxcDriver returns a new instance of the LXC driver
@@ -76,52 +65,8 @@ func (d *LxcDriver) Validate(config map[string]interface{}) error {
 	fd := &fields.FieldData{
 		Raw: config,
 		Schema: map[string]*fields.FieldSchema{
-			"template": &fields.FieldSchema{
+			"container_artifact": &fields.FieldSchema{
 				Type:     fields.TypeString,
-				Required: true,
-			},
-			"distro": &fields.FieldSchema{
-				Type:     fields.TypeString,
-				Required: false,
-			},
-			"release": &fields.FieldSchema{
-				Type:     fields.TypeString,
-				Required: false,
-			},
-			"arch": &fields.FieldSchema{
-				Type:     fields.TypeString,
-				Required: false,
-			},
-			"image_variant": &fields.FieldSchema{
-				Type:     fields.TypeString,
-				Required: false,
-			},
-			"image_server": &fields.FieldSchema{
-				Type:     fields.TypeString,
-				Required: false,
-			},
-			"gpg_key_id": &fields.FieldSchema{
-				Type:     fields.TypeString,
-				Required: false,
-			},
-			"gpg_key_server": &fields.FieldSchema{
-				Type:     fields.TypeString,
-				Required: false,
-			},
-			"disable_gpg": &fields.FieldSchema{
-				Type:     fields.TypeString,
-				Required: false,
-			},
-			"flush_cache": &fields.FieldSchema{
-				Type:     fields.TypeString,
-				Required: false,
-			},
-			"force_cache": &fields.FieldSchema{
-				Type:     fields.TypeString,
-				Required: false,
-			},
-			"template_args": &fields.FieldSchema{
-				Type:     fields.TypeArray,
 				Required: false,
 			},
 			"log_level": &fields.FieldSchema{
@@ -159,11 +104,20 @@ func (d *LxcDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandle, e
 	if err := mapstructure.WeakDecode(task.Config, &driverConfig); err != nil {
 		return nil, err
 	}
-	lxcPath := lxc.DefaultConfigPath()
-	if path := d.config.Read("lxc.path"); path != "" {
-		lxcPath = path
+
+	taskLocalDir, ok := ctx.AllocDir.TaskDirs[task.Name]
+	if !ok {
+		return nil, fmt.Errorf("failed to find task local directory: %v", task.Name)
 	}
 
+	// Default to "local/rootfs" as the root of the container
+	lxcPath := filepath.Join(taskLocalDir, "rootfs")
+	if cfgPath := d.config.Read("lxc.path"); cfgPath != "" {
+		// Allow overriding only to another local/ relative path
+		lxcPath = filepath.Join(taskLocalDir, cfgPath)
+	}
+
+	// Create container in lxc path using task name and alloc ID
 	containerName := fmt.Sprintf("%s-%s", task.Name, ctx.AllocID)
 	c, err := lxc.NewContainer(containerName, lxcPath)
 	if err != nil {
@@ -201,29 +155,12 @@ func (d *LxcDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandle, e
 	logFile := filepath.Join(ctx.AllocDir.LogDir(), fmt.Sprintf("%v-lxc.log", task.Name))
 	c.SetLogFile(logFile)
 
-	options := lxc.TemplateOptions{
-		Template:             driverConfig.Template,
-		Distro:               driverConfig.Distro,
-		Release:              driverConfig.Release,
-		Arch:                 driverConfig.Arch,
-		FlushCache:           driverConfig.FlushCache,
-		DisableGPGValidation: driverConfig.DisableGPGValidation,
-	}
-
-	if err := c.Create(options); err != nil {
-		return nil, fmt.Errorf("unable to create container: %v", err)
-	}
-
 	// Set the network type to none
 	if err := c.SetConfigItem("lxc.network.type", "none"); err != nil {
 		return nil, fmt.Errorf("error setting network type configuration: %v", err)
 	}
 
 	// Bind mount the shared alloc dir and task local dir in the container
-	taskLocalDir, ok := ctx.AllocDir.TaskDirs[task.Name]
-	if !ok {
-		return nil, fmt.Errorf("failed to find task local directory: %v", task.Name)
-	}
 	taskDirMount := fmt.Sprintf("%s local none rw,bind,create=dir", taskLocalDir)
 	allocDirMount := fmt.Sprintf("%s alloc none rw,bind,create=dir", ctx.AllocDir.SharedDir)
 
