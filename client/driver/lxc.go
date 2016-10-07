@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hashicorp/nomad/client/allocdir"
 	"github.com/hashicorp/nomad/client/config"
 	"github.com/hashicorp/nomad/client/fingerprint"
 	"github.com/hashicorp/nomad/client/stats"
@@ -105,23 +106,33 @@ func (d *LxcDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandle, e
 		return nil, err
 	}
 
-	taskLocalDir, ok := ctx.AllocDir.TaskDirs[task.Name]
+	taskDir, ok := ctx.AllocDir.TaskDirs[task.Name]
 	if !ok {
 		return nil, fmt.Errorf("failed to find task local directory: %v", task.Name)
 	}
 
 	// Default to "local/rootfs" as the root of the container
-	lxcPath := filepath.Join(taskLocalDir, "rootfs")
-	if cfgPath := d.config.Read("lxc.path"); cfgPath != "" {
-		// Allow overriding only to another local/ relative path
-		lxcPath = filepath.Join(taskLocalDir, cfgPath)
-	}
+	lxcPath := filepath.Join(taskDir, allocdir.TaskLocal, "rootfs")
 
 	// Create container in lxc path using task name and alloc ID
 	containerName := fmt.Sprintf("%s-%s", task.Name, ctx.AllocID)
-	c, err := lxc.NewContainer(containerName, lxcPath)
+	//c, err := lxc.NewContainer(containerName, lxcPath)
+	c, err := lxc.NewContainer(containerName)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create container: %v", err)
+	}
+
+	d.logger.Printf("[DEBUG] driver.lxc: LXC NAME: %s   PATH: %s", containerName, lxcPath)
+
+	//TODO kill this?
+	cfgPath := d.config.ReadDefault("lxc.config", "config")
+	if cfgPath != "" {
+		// config should always be relative to local/
+		cfgPath = filepath.Join(taskDir, allocdir.TaskLocal, cfgPath)
+		if err := c.LoadConfigFile(cfgPath); err != nil {
+			return nil, fmt.Errorf("unable to load config %q: %v", cfgPath, err)
+		}
+		d.logger.Printf("[DEBUG] driver.lxc: config: %s", cfgPath)
 	}
 
 	var verbosity lxc.Verbosity
@@ -156,32 +167,83 @@ func (d *LxcDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandle, e
 	c.SetLogFile(logFile)
 
 	// Set the network type to none
-	if err := c.SetConfigItem("lxc.network.type", "none"); err != nil {
-		return nil, fmt.Errorf("error setting network type configuration: %v", err)
+	/*
+		if err := c.ClearConfigItem("lxc.network"); err != nil {
+			return nil, fmt.Errorf("error clearing network type configuration: %v", err)
+		}
+		if err := c.SetConfigItem("lxc.network.type", "none"); err != nil {
+			return nil, fmt.Errorf("error setting network type configuration: %v", err)
+		}
+	*/
+
+	/*
+		// Tell LXC to populate /dev
+		if err := c.SetConfigItem("lxc.autodev", "1"); err != nil {
+			return nil, fmt.Errorf("error enabled autodev: %v", err)
+		}
+	*/
+
+	/*
+		// Populate enough ttys to make inits happy
+		if err := c.SetConfigItem("lxc.tty", "64"); err != nil {
+			return nil, fmt.Errorf("error enabled autodev: %v", err)
+		}
+	*/
+
+	// Set rootfs
+	if err := c.SetConfigItem("lxc.rootfs", lxcPath); err != nil {
+		return nil, fmt.Errorf("error setting rootfs to %q: %v", lxcPath, err)
 	}
+	if err := c.SetConfigItem("lxc.rootfs.backend", "dir"); err != nil {
+		return nil, fmt.Errorf(`error setting rootfs.backend to "dir": %v`, lxcPath, err)
+	}
+	if err := c.SetConfigItem("lxc.rootfs.mount", lxcPath); err != nil {
+		return nil, fmt.Errorf("error setting rootfs to %q: %v", lxcPath, err)
+	}
+
+	//FIXME
+	/*
+		if err := c.SetConfigItem("lxc.arch", "amd64"); err != nil {
+			return nil, fmt.Errorf(`error setting rootfs.backend to "dir": %v`, lxcPath, err)
+		}
+		if err := c.SetConfigItem("lxc.mount.entry", "run run tmpfs rw,nodev,relatime,mode=755 0 0"); err != nil {
+			return nil, fmt.Errorf(`error setting rootfs.backend to "dir": %v`, lxcPath, err)
+		}
+	*/
 
 	// Bind mount the shared alloc dir and task local dir in the container
-	taskDirMount := fmt.Sprintf("%s local none rw,bind,create=dir", taskLocalDir)
-	allocDirMount := fmt.Sprintf("%s alloc none rw,bind,create=dir", ctx.AllocDir.SharedDir)
+	//taskDirMount := fmt.Sprintf("%s local none rw,bind,create=dir", taskLocalDir)
+	//allocDirMount := fmt.Sprintf("%s alloc none rw,bind,create=dir", ctx.AllocDir.SharedDir)
 
-	if err := c.SetConfigItem("lxc.mount.entry", allocDirMount); err != nil {
-		return nil, fmt.Errorf("error setting alloc dir bind mounts configuration: %v", err)
-	}
-	if err := c.SetConfigItem("lxc.mount.entry", taskDirMount); err != nil {
-		return nil, fmt.Errorf("error setting task dir bind mounts configuration: %v", err)
+	/*
+		if err := c.SetConfigItem("lxc.mount.entry", allocDirMount); err != nil {
+			return nil, fmt.Errorf("error setting alloc dir bind mounts configuration: %v", err)
+		}
+			if err := c.SetConfigItem("lxc.mount.entry", taskDirMount); err != nil {
+				return nil, fmt.Errorf("error setting task dir bind mounts configuration: %v", err)
+			}
+	*/
+
+	for _, k := range c.ConfigKeys() {
+		for _, v := range c.ConfigItem(k) {
+			d.logger.Printf("[DEBUG] driver.lxc: CONF: %s = %s", k, v)
+		}
 	}
 
 	if err := c.Start(); err != nil {
 		return nil, fmt.Errorf("unable to start container: %v", err)
 	}
+	d.logger.Printf("[DEBUG] driver.lxc:  STARTED--------> %d", c.InitPid())
 
 	// Set the resource limits
-	if err := c.SetMemoryLimit(lxc.ByteSize(task.Resources.MemoryMB) * lxc.MB); err != nil {
-		return nil, fmt.Errorf("unable to set memory limits: %v", err)
-	}
-	if err := c.SetCgroupItem("cpu.shares", strconv.Itoa(task.Resources.CPU)); err != nil {
-		return nil, fmt.Errorf("unable to set cpu shares: %v", err)
-	}
+	/*
+		if err := c.SetMemoryLimit(lxc.ByteSize(task.Resources.MemoryMB) * lxc.MB); err != nil {
+			return nil, fmt.Errorf("unable to set memory limits: %v", err)
+		}
+		if err := c.SetCgroupItem("cpu.shares", strconv.Itoa(task.Resources.CPU)); err != nil {
+			return nil, fmt.Errorf("unable to set cpu shares: %v", err)
+		}
+	*/
 
 	handle := lxcDriverHandle{
 		container:      c,
