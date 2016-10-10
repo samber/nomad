@@ -167,28 +167,12 @@ func (d *LxcDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandle, e
 	c.SetLogFile(logFile)
 
 	// Set the network type to none
-	/*
-		if err := c.ClearConfigItem("lxc.network"); err != nil {
-			return nil, fmt.Errorf("error clearing network type configuration: %v", err)
-		}
-		if err := c.SetConfigItem("lxc.network.type", "none"); err != nil {
-			return nil, fmt.Errorf("error setting network type configuration: %v", err)
-		}
-	*/
-
-	/*
-		// Tell LXC to populate /dev
-		if err := c.SetConfigItem("lxc.autodev", "1"); err != nil {
-			return nil, fmt.Errorf("error enabled autodev: %v", err)
-		}
-	*/
-
-	/*
-		// Populate enough ttys to make inits happy
-		if err := c.SetConfigItem("lxc.tty", "64"); err != nil {
-			return nil, fmt.Errorf("error enabled autodev: %v", err)
-		}
-	*/
+	if err := c.ClearConfigItem("lxc.network"); err != nil {
+		return nil, fmt.Errorf("error clearing network type configuration: %v", err)
+	}
+	if err := c.SetConfigItem("lxc.network.type", "none"); err != nil {
+		return nil, fmt.Errorf("error setting network type configuration: %v", err)
+	}
 
 	// Set rootfs
 	if err := c.SetConfigItem("lxc.rootfs", lxcPath); err != nil {
