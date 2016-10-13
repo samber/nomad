@@ -185,6 +185,22 @@ func (d *LxcDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandle, e
 		return nil, fmt.Errorf("error setting rootfs to %q: %v", lxcPath, err)
 	}
 
+	// Attempt to set uid map if not already set
+	idmaps := c.ConfigItem("lxc.id_map")
+	d.logger.Printf("[DEBUG] driver.lxc: id config1: %+q", idmaps)
+	if len(idmaps) == 0 || (len(idmaps) == 1 && idmaps[0] == "") {
+		if err := c.ClearConfigItem("lxc.id_map"); err != nil {
+			return nil, fmt.Errorf("error clearing lxc.id_map: %v", err)
+		}
+		if err := c.SetConfigItem("lxc.id_map", "u 0 100000 65536"); err != nil {
+			return nil, fmt.Errorf("error adding uid_map: %v", err)
+		}
+		if err := c.SetConfigItem("lxc.id_map", "g 0 100000 65536"); err != nil {
+			return nil, fmt.Errorf("error adding gid_map: %v", err)
+		}
+		d.logger.Printf("[DEBUG] driver.lxc: id config2: %+q", c.ConfigItem("lxc.id_map"))
+	}
+
 	//FIXME
 	/*
 		if err := c.SetConfigItem("lxc.arch", "amd64"); err != nil {
