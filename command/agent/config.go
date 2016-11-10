@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hashicorp/consul/consul"
 	client "github.com/hashicorp/nomad/client/config"
+	"github.com/hashicorp/nomad/helper/iputil"
 	"github.com/hashicorp/nomad/nomad"
 	"github.com/hashicorp/nomad/nomad/structs/config"
 )
@@ -758,8 +758,7 @@ func normalizeAdvertise(addr string, bind string, defport int, dev bool) (string
 		}
 	}
 
-	// Use Consul's GetPrivateIP function as a final fallback
-	ip, err := consul.GetPrivateIP()
+	ip, err := iputil.GetPrivateIP()
 	if err != nil {
 		return "", fmt.Errorf("Error getting private IP for advertise address: %v", err)
 	}
