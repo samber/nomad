@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hashicorp/consul/consul"
 	client "github.com/hashicorp/nomad/client/config"
 	"github.com/hashicorp/nomad/nomad"
 	"github.com/hashicorp/nomad/nomad/structs/config"
@@ -757,29 +758,13 @@ func normalizeAdvertise(addr string, bind string, defport int, dev bool) (string
 		}
 	}
 
-	// As a last resort resolve the hostname and use it if it's not
-	// localhost (as localhost is never a sensible default)
-	host, err := os.Hostname()
+	// Use Consul's GetPrivateIP function as a final fallback
+	ip, err := consul.GetPrivateIP()
 	if err != nil {
-		return "", fmt.Errorf("Unable to get hostname to set advertise address: %v", err)
+		return "", fmt.Errorf("Error getting private IP for advertise address: %v", err)
 	}
 
-	ips, err = net.LookupIP(host)
-	if err != nil {
-		return "", fmt.Errorf("Error resolving hostname %q for advertise address: %v", host, err)
-	}
-
-	// Return the first unicast address
-	for _, ip := range ips {
-		if ip.IsLinkLocalUnicast() || ip.IsGlobalUnicast() {
-			return fmt.Sprintf("%s:%d", ip, defport), nil
-		}
-		if ip.IsLoopback() && dev {
-			// loopback is fine for dev mode
-			return fmt.Sprintf("%s:%d", ip, defport), nil
-		}
-	}
-	return "", fmt.Errorf("No valid advertise addresses, please set `advertise` manually")
+	return fmt.Sprintf("%s:%d", ip, defport), nil
 }
 
 // isMissingPort returns true if an error is a "missing port" error from
