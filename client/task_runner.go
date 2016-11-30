@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
@@ -1023,13 +1024,25 @@ func (r *TaskRunner) startTask() error {
 			r.task.Name, r.alloc.ID, err)
 	}
 
+	// Run prestart
+	//FIXME
+	emitter := func(m string, args ...interface{}) error {
+		r.logger.Printf("[EVENT] client.prestart: "+m, args...)
+		return nil
+	}
+	if err := driver.Prestart(context.TODO(), r.ctx, emitter, r.task); err != nil {
+		//TODO handle context.Canceled ?!
+		//TODO wrap with recoverable
+		r.logger.Printf("[ERROR] client: %v", err)
+	}
+
 	// Start the job
 	handle, err := driver.Start(r.ctx, r.task)
 	if err != nil {
 		wrapped := fmt.Errorf("failed to start task '%s' for alloc '%s': %v",
 			r.task.Name, r.alloc.ID, err)
 
-		r.logger.Printf("[INFO] client: %v", wrapped)
+		r.logger.Printf("[WARN] client: %v", wrapped)
 
 		if rerr, ok := err.(*structs.RecoverableError); ok {
 			return structs.NewRecoverableError(wrapped, rerr.Recoverable)
