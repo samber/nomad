@@ -1,6 +1,7 @@
 package driver
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -51,6 +52,11 @@ type Driver interface {
 	// Drivers must support the fingerprint interface for detection
 	fingerprint.Fingerprint
 
+	// Prestart performs any initialization steps before Start is called to
+	// execute the task. Since initialization can include slow actions like
+	// downloading images it is able to be interrupted and can emit events.
+	Prestart(context.Context, *ExecContext, LogEventFn, *structs.Task) error
+
 	// Start is used to being task execution
 	Start(ctx *ExecContext, task *structs.Task) (DriverHandle, error)
 
@@ -62,6 +68,31 @@ type Driver interface {
 
 	// Abilities returns the abilities of the driver
 	Abilities() DriverAbilities
+}
+
+// LogEventFn is a callback which allows the Prestart method on Drivers to emit
+// events during long running actions.
+// Errors returned by this function should be treated as a Prestart failure and
+// be returned by Prestart.
+type LogEventFn func(*PrestartEvent) error
+
+// PrestartEvents are emitted by Driver Prestart methods and converted into
+// TaskEvents.
+type PrestartEvent struct {
+	Time      int64
+	Message   string
+	FailsTask bool
+}
+
+// TaskEvent returns a structs.TaskEvent version of a PrestartEvent.
+func (p *PrestartEvent) TaskEvent() *structs.TaskEvent {
+	return &structs.TaskEvent{
+		Type:       structs.TaskSetupFailure,
+		Time:       p.Time,
+		FailsTask:  p.FailsTask,
+		SetupError: p.Message,
+	}
+
 }
 
 // DriverAbilities marks the abilities the driver has.
