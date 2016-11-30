@@ -3,7 +3,6 @@
 package driver
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -76,7 +75,7 @@ func (d *MockDriver) Abilities() DriverAbilities {
 	}
 }
 
-func (d *MockDriver) Prestart(ctx context.Context, execctx *ExecContext, emit LogEventFn, task *structs.Task) error {
+func (d *MockDriver) Prestart(ctx *ExecContext, emit LogEventFn, task *structs.Task) error {
 	panic("TODO")
 }
 

@@ -1,7 +1,6 @@
 package driver
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -108,7 +107,7 @@ func (d *RawExecDriver) Fingerprint(cfg *config.Config, node *structs.Node) (boo
 	return false, nil
 }
 
-func (d *RawExecDriver) Prestart(ctx context.Context, execctx *ExecContext, emit LogEventFn, task *structs.Task) error {
+func (d *RawExecDriver) Prestart(ctx *ExecContext, emit LogEventFn, task *structs.Task) error {
 	panic("TODO")
 }
 

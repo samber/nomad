@@ -2,7 +2,6 @@ package driver
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -207,7 +206,7 @@ func (d *RktDriver) Periodic() (bool, time.Duration) {
 	return true, 15 * time.Second
 }
 
-func (d *RktDriver) Prestart(ctx context.Context, execctx *ExecContext, emit LogEventFn, task *structs.Task) error {
+func (d *RktDriver) Prestart(ctx *ExecContext, emit LogEventFn, task *structs.Task) error {
 	panic("TODO")
 }
 

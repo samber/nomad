@@ -1,7 +1,6 @@
 package client
 
 import (
-	"context"
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
@@ -1031,9 +1030,9 @@ func (r *TaskRunner) startTask() error {
 		r.setState(structs.TaskStatePending,
 			structs.NewTaskEvent(structs.TaskInitializing).SetPrestartMessage(msg))
 	}
-	if err := driver.Prestart(context.TODO(), r.ctx, emitter, r.task); err != nil {
-		//TODO handle context.Canceled ?!
+	if err := driver.Prestart(r.ctx, emitter, r.task); err != nil {
 		//TODO wrap with recoverable
+		//TODO cleanup?
 		r.logger.Printf("[ERROR] client: %v", err)
 	}
 

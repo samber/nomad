@@ -1,7 +1,6 @@
 package driver
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -336,7 +335,7 @@ func (d *DockerDriver) Abilities() DriverAbilities {
 	}
 }
 
-func (d *DockerDriver) Prestart(ctx context.Context, execctx *ExecContext, emit LogEventFn, task *structs.Task) error {
+func (d *DockerDriver) Prestart(ctx *ExecContext, emit LogEventFn, task *structs.Task) error {
 	// Set environment variables.
 	d.taskEnv.SetAllocDir(allocdir.SharedAllocContainerPath).
 		SetTaskLocalDir(allocdir.TaskLocalContainerPath).SetSecretsDir(allocdir.TaskSecretsContainerPath).Build()
@@ -346,7 +345,7 @@ func (d *DockerDriver) Prestart(ctx context.Context, execctx *ExecContext, emit 
 		return err
 	}
 
-	taskDir, ok := execctx.AllocDir.TaskDirs[d.DriverContext.taskName]
+	taskDir, ok := ctx.AllocDir.TaskDirs[d.DriverContext.taskName]
 	if !ok {
 		return fmt.Errorf("Could not find task directory for task: %v", d.DriverContext.taskName)
 	}
@@ -357,7 +356,7 @@ func (d *DockerDriver) Prestart(ctx context.Context, execctx *ExecContext, emit 
 		return fmt.Errorf("Failed to connect to docker daemon: %s", err)
 	}
 
-	if err := d.createImage(ctx, emit, driverConfig, client, taskDir); err != nil {
+	if err := d.createImage(emit, driverConfig, client, taskDir); err != nil {
 		return err
 	}
 
@@ -387,8 +386,8 @@ func (d *DockerDriver) Prestart(ctx context.Context, execctx *ExecContext, emit 
 		TaskEnv:        d.taskEnv,
 		Task:           task,
 		Driver:         "docker",
-		AllocDir:       execctx.AllocDir,
-		AllocID:        execctx.AllocID,
+		AllocDir:       ctx.AllocDir,
+		AllocID:        ctx.AllocID,
 		PortLowerBound: d.config.ClientMinPort,
 		PortUpperBound: d.config.ClientMaxPort,
 	}
@@ -410,7 +409,7 @@ func (d *DockerDriver) Prestart(ctx context.Context, execctx *ExecContext, emit 
 		syslogAddr = ss.Addr
 	}
 
-	config, err := d.createContainerConfig(execctx, task, driverConfig, syslogAddr)
+	config, err := d.createContainerConfig(ctx, task, driverConfig, syslogAddr)
 	if err != nil {
 		d.logger.Printf("[ERR] driver.docker: failed to create container configuration for image %s: %s", image, err)
 		pluginClient.Kill()
@@ -869,7 +868,7 @@ func (d *DockerDriver) Periodic() (bool, time.Duration) {
 
 // createImage creates a docker image either by pulling it from a registry or by
 // loading it from the file system
-func (d *DockerDriver) createImage(ctx context.Context, emit LogEventFn, driverConfig *DockerDriverConfig, client *docker.Client, taskDir string) error {
+func (d *DockerDriver) createImage(emit LogEventFn, driverConfig *DockerDriverConfig, client *docker.Client, taskDir string) error {
 	image := driverConfig.ImageName
 	repo, tag := docker.ParseRepositoryTag(image)
 	if tag == "" {
@@ -891,15 +890,14 @@ func (d *DockerDriver) createImage(ctx context.Context, emit LogEventFn, driverC
 			return d.loadImage(driverConfig, client, taskDir)
 		}
 
-		return d.pullImage(ctx, emit, driverConfig, client, repo, tag)
+		return d.pullImage(emit, driverConfig, client, repo, tag)
 	}
 	return err
 }
 
 // pullImage creates an image by pulling it from a docker registry
-func (d *DockerDriver) pullImage(ctx context.Context, emit LogEventFn, driverConfig *DockerDriverConfig, client *docker.Client, repo string, tag string) error {
+func (d *DockerDriver) pullImage(emit LogEventFn, driverConfig *DockerDriverConfig, client *docker.Client, repo string, tag string) error {
 	pullOptions := docker.PullImageOptions{
-		Context:    ctx,
 		Repository: repo,
 		Tag:        tag,
 	}

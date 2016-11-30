@@ -1,7 +1,6 @@
 package driver
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -93,7 +92,7 @@ func (d *ExecDriver) Periodic() (bool, time.Duration) {
 	return true, 15 * time.Second
 }
 
-func (d *ExecDriver) Prestart(ctx context.Context, execctx *ExecContext, emit LogEventFn, task *structs.Task) error {
+func (d *ExecDriver) Prestart(execctx *ExecContext, emit LogEventFn, task *structs.Task) error {
 	panic("TODO")
 }
 

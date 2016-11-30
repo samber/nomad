@@ -1,7 +1,6 @@
 package driver
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -136,7 +135,7 @@ func (d *QemuDriver) Fingerprint(cfg *config.Config, node *structs.Node) (bool, 
 	return true, nil
 }
 
-func (d *QemuDriver) Prestart(ctx context.Context, execctx *ExecContext, emit LogEventFn, task *structs.Task) error {
+func (d *QemuDriver) Prestart(ctx *ExecContext, emit LogEventFn, task *structs.Task) error {
 	panic("TODO")
 }
 
