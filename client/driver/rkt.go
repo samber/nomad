@@ -2,6 +2,7 @@ package driver
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -204,6 +205,10 @@ func (d *RktDriver) Fingerprint(cfg *config.Config, node *structs.Node) (bool, e
 
 func (d *RktDriver) Periodic() (bool, time.Duration) {
 	return true, 15 * time.Second
+}
+
+func (d *RktDriver) Prestart(ctx context.Context, execctx *ExecContext, emit LogEventFn, task *structs.Task) error {
+	panic("TODO")
 }
 
 // Run an existing Rkt image.

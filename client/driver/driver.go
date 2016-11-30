@@ -74,10 +74,11 @@ type Driver interface {
 // events during long running actions.
 // Errors returned by this function should be treated as a Prestart failure and
 // be returned by Prestart.
-type LogEventFn func(*PrestartEvent) error
+type LogEventFn func(message string, args ...interface{}) error
 
 // PrestartEvents are emitted by Driver Prestart methods and converted into
 // TaskEvents.
+/*
 type PrestartEvent struct {
 	Time      int64
 	Message   string
@@ -85,7 +86,7 @@ type PrestartEvent struct {
 }
 
 // TaskEvent returns a structs.TaskEvent version of a PrestartEvent.
-func (p *PrestartEvent) TaskEvent() *structs.TaskEvent {
+func (p PrestartEvent) TaskEvent() *structs.TaskEvent {
 	return &structs.TaskEvent{
 		Type:       structs.TaskSetupFailure,
 		Time:       p.Time,
@@ -94,6 +95,7 @@ func (p *PrestartEvent) TaskEvent() *structs.TaskEvent {
 	}
 
 }
+*/
 
 // DriverAbilities marks the abilities the driver has.
 type DriverAbilities struct {

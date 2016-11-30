@@ -1,6 +1,7 @@
 package driver
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -80,6 +81,13 @@ const (
 
 type DockerDriver struct {
 	DriverContext
+
+	containerID  string
+	hostConfig   *docker.HostConfig
+	imageID      string
+	waitClient   *docker.Client
+	pluginClient *plugin.Client
+	exec         executor.Executor
 }
 
 type DockerDriverAuth struct {
@@ -328,31 +336,29 @@ func (d *DockerDriver) Abilities() DriverAbilities {
 	}
 }
 
-func (d *DockerDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandle, error) {
+func (d *DockerDriver) Prestart(ctx context.Context, execctx *ExecContext, emit LogEventFn, task *structs.Task) error {
 	// Set environment variables.
 	d.taskEnv.SetAllocDir(allocdir.SharedAllocContainerPath).
 		SetTaskLocalDir(allocdir.TaskLocalContainerPath).SetSecretsDir(allocdir.TaskSecretsContainerPath).Build()
 
 	driverConfig, err := NewDockerDriverConfig(task, d.taskEnv)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	cleanupImage := d.config.ReadBoolDefault("docker.cleanup.image", true)
-
-	taskDir, ok := ctx.AllocDir.TaskDirs[d.DriverContext.taskName]
+	taskDir, ok := execctx.AllocDir.TaskDirs[d.DriverContext.taskName]
 	if !ok {
-		return nil, fmt.Errorf("Could not find task directory for task: %v", d.DriverContext.taskName)
+		return fmt.Errorf("Could not find task directory for task: %v", d.DriverContext.taskName)
 	}
 
 	// Initialize docker API clients
 	client, waitClient, err := d.dockerClients()
 	if err != nil {
-		return nil, fmt.Errorf("Failed to connect to docker daemon: %s", err)
+		return fmt.Errorf("Failed to connect to docker daemon: %s", err)
 	}
 
-	if err := d.createImage(driverConfig, client, taskDir); err != nil {
-		return nil, err
+	if err := d.createImage(ctx, emit, driverConfig, client, taskDir); err != nil {
+		return err
 	}
 
 	image := driverConfig.ImageName
@@ -360,13 +366,13 @@ func (d *DockerDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandle
 	dockerImage, err := client.InspectImage(image)
 	if err != nil {
 		d.logger.Printf("[ERR] driver.docker: failed getting image id for %s: %s", image, err)
-		return nil, fmt.Errorf("Failed to determine image id for `%s`: %s", image, err)
+		return fmt.Errorf("Failed to determine image id for `%s`: %s", image, err)
 	}
 	d.logger.Printf("[DEBUG] driver.docker: identified image %s as %s", image, dockerImage.ID)
 
 	bin, err := discover.NomadExecutable()
 	if err != nil {
-		return nil, fmt.Errorf("unable to find the nomad binary: %v", err)
+		return fmt.Errorf("unable to find the nomad binary: %v", err)
 	}
 	pluginLogFile := filepath.Join(taskDir, fmt.Sprintf("%s-executor.out", task.Name))
 	pluginConfig := &plugin.ClientConfig{
@@ -375,20 +381,20 @@ func (d *DockerDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandle
 
 	exec, pluginClient, err := createExecutor(pluginConfig, d.config.LogOutput, d.config)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	executorCtx := &executor.ExecutorContext{
 		TaskEnv:        d.taskEnv,
 		Task:           task,
 		Driver:         "docker",
-		AllocDir:       ctx.AllocDir,
-		AllocID:        ctx.AllocID,
+		AllocDir:       execctx.AllocDir,
+		AllocID:        execctx.AllocID,
 		PortLowerBound: d.config.ClientMinPort,
 		PortUpperBound: d.config.ClientMaxPort,
 	}
 	if err := exec.SetContext(executorCtx); err != nil {
 		pluginClient.Kill()
-		return nil, fmt.Errorf("failed to set executor context: %v", err)
+		return fmt.Errorf("failed to set executor context: %v", err)
 	}
 
 	// Only launch syslog server if we're going to use it!
@@ -399,16 +405,16 @@ func (d *DockerDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandle
 		ss, err := exec.LaunchSyslogServer()
 		if err != nil {
 			pluginClient.Kill()
-			return nil, fmt.Errorf("failed to start syslog collector: %v", err)
+			return fmt.Errorf("failed to start syslog collector: %v", err)
 		}
 		syslogAddr = ss.Addr
 	}
 
-	config, err := d.createContainerConfig(ctx, task, driverConfig, syslogAddr)
+	config, err := d.createContainerConfig(execctx, task, driverConfig, syslogAddr)
 	if err != nil {
 		d.logger.Printf("[ERR] driver.docker: failed to create container configuration for image %s: %s", image, err)
 		pluginClient.Kill()
-		return nil, fmt.Errorf("Failed to create container configuration for image %s: %s", image, err)
+		return fmt.Errorf("Failed to create container configuration for image %s: %s", image, err)
 	}
 
 	container, rerr := d.createContainer(config)
@@ -416,38 +422,54 @@ func (d *DockerDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandle
 		d.logger.Printf("[ERR] driver.docker: failed to create container: %s", rerr)
 		pluginClient.Kill()
 		rerr.Err = fmt.Sprintf("Failed to create container: %s", rerr.Err)
-		return nil, rerr
+		return rerr
 	}
 
 	d.logger.Printf("[INFO] driver.docker: created container %s", container.ID)
 
+	// Set state needed by Start()
+	d.containerID = container.ID
+	d.hostConfig = container.HostConfig
+	d.imageID = dockerImage.ID
+	d.waitClient = waitClient
+	d.pluginClient = pluginClient
+	d.exec = exec
+	return nil
+}
+
+func (d *DockerDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandle, error) {
+
+	cleanupImage := d.config.ReadBoolDefault("docker.cleanup.image", true)
+
 	// Start the container
-	err = client.StartContainer(container.ID, container.HostConfig)
+	err := client.StartContainer(d.containerID, d.hostConfig)
 	if err != nil {
-		d.logger.Printf("[ERR] driver.docker: failed to start container %s: %s", container.ID, err)
-		pluginClient.Kill()
-		return nil, fmt.Errorf("Failed to start container %s: %s", container.ID, err)
+		d.logger.Printf("[ERR] driver.docker: failed to start container %s: %s", d.containerID, err)
+		d.pluginClient.Kill()
+		return nil, fmt.Errorf("Failed to start container %s: %s", d.containerID, err)
 	}
-	d.logger.Printf("[INFO] driver.docker: started container %s", container.ID)
+	d.logger.Printf("[INFO] driver.docker: started container %s", d.containerID)
 
 	// Return a driver handle
 	maxKill := d.DriverContext.config.MaxKillTimeout
 	h := &DockerHandle{
 		client:         client,
-		waitClient:     waitClient,
-		executor:       exec,
-		pluginClient:   pluginClient,
+		waitClient:     d.waitClient,
+		executor:       d.exec,
+		pluginClient:   d.pluginClient,
 		cleanupImage:   cleanupImage,
 		logger:         d.logger,
-		imageID:        dockerImage.ID,
-		containerID:    container.ID,
+		imageID:        d.imageID,
+		containerID:    d.containerID,
 		version:        d.config.Version,
 		killTimeout:    GetKillTimeout(task.KillTimeout, maxKill),
 		maxKillTimeout: maxKill,
 		doneCh:         make(chan bool),
 		waitCh:         make(chan *dstructs.WaitResult, 1),
 	}
-	if err := exec.SyncServices(consulContext(d.config, container.ID)); err != nil {
+
+	//TODO and move to task runner
+	if err := d.exec.SyncServices(consulContext(d.config, d.containerID)); err != nil {
 		d.logger.Printf("[ERR] driver.docker: error registering services with consul for task: %q: %v", task.Name, err)
 	}
 	go h.collectStats()
@@ -847,7 +869,7 @@ func (d *DockerDriver) Periodic() (bool, time.Duration) {
 
 // createImage creates a docker image either by pulling it from a registry or by
 // loading it from the file system
-func (d *DockerDriver) createImage(driverConfig *DockerDriverConfig, client *docker.Client, taskDir string) error {
+func (d *DockerDriver) createImage(ctx context.Context, emit LogEventFn, driverConfig *DockerDriverConfig, client *docker.Client, taskDir string) error {
 	image := driverConfig.ImageName
 	repo, tag := docker.ParseRepositoryTag(image)
 	if tag == "" {
@@ -869,14 +891,15 @@ func (d *DockerDriver) createImage(driverConfig *DockerDriverConfig, client *doc
 			return d.loadImage(driverConfig, client, taskDir)
 		}
 
-		return d.pullImage(driverConfig, client, repo, tag)
+		return d.pullImage(ctx, emit, driverConfig, client, repo, tag)
 	}
 	return err
 }
 
 // pullImage creates an image by pulling it from a docker registry
-func (d *DockerDriver) pullImage(driverConfig *DockerDriverConfig, client *docker.Client, repo string, tag string) error {
+func (d *DockerDriver) pullImage(ctx context.Context, emit LogEventFn, driverConfig *DockerDriverConfig, client *docker.Client, repo string, tag string) error {
 	pullOptions := docker.PullImageOptions{
+		Context:    ctx,
 		Repository: repo,
 		Tag:        tag,
 	}
@@ -915,6 +938,7 @@ func (d *DockerDriver) pullImage(driverConfig *DockerDriverConfig, client *docke
 		}
 	}
 
+	emit("Pulling docker image %s:%s", repo, tag)
 	err := client.PullImage(pullOptions, authOptions)
 	if err != nil {
 		d.logger.Printf("[ERR] driver.docker: failed pulling container %s:%s: %s", repo, tag, err)

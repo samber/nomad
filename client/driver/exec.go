@@ -1,6 +1,7 @@
 package driver
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -90,6 +91,10 @@ func (d *ExecDriver) Abilities() DriverAbilities {
 
 func (d *ExecDriver) Periodic() (bool, time.Duration) {
 	return true, 15 * time.Second
+}
+
+func (d *ExecDriver) Prestart(ctx context.Context, execctx *ExecContext, emit LogEventFn, task *structs.Task) error {
+	panic("TODO")
 }
 
 func (d *ExecDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandle, error) {
