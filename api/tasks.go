@@ -252,6 +252,7 @@ const (
 	TaskSiblingFailed          = "Sibling task failed"
 	TaskSignaling              = "Signaling"
 	TaskRestartSignal          = "Restart Signaled"
+	TaskInitializing           = "Initializing"
 )
 
 // TaskEvent is an event that effects the state of a task and contains meta-data
@@ -278,4 +279,5 @@ type TaskEvent struct {
 	VaultError       string
 	TaskSignalReason string
 	TaskSignal       string
+	PrestartMessage  string
 }

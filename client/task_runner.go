@@ -1020,15 +1020,16 @@ func (r *TaskRunner) startTask() error {
 	// Create a driver
 	driver, err := r.createDriver()
 	if err != nil {
-		return fmt.Errorf("failed to create driver of task '%s' for alloc '%s': %v",
+		return fmt.Errorf("failed to create driver of task %q for alloc %q: %v",
 			r.task.Name, r.alloc.ID, err)
 	}
 
 	// Run prestart
-	//FIXME
-	emitter := func(m string, args ...interface{}) error {
-		r.logger.Printf("[EVENT] client.prestart: "+m, args...)
-		return nil
+	emitter := func(m string, args ...interface{}) {
+		msg := fmt.Sprintf(m, args...)
+		r.logger.Printf("[DEBUG] client: Prestart event for alloc %q: %s", r.alloc.ID, msg)
+		r.setState(structs.TaskStatePending,
+			structs.NewTaskEvent(structs.TaskInitializing).SetPrestartMessage(msg))
 	}
 	if err := driver.Prestart(context.TODO(), r.ctx, emitter, r.task); err != nil {
 		//TODO handle context.Canceled ?!
@@ -1039,7 +1040,7 @@ func (r *TaskRunner) startTask() error {
 	// Start the job
 	handle, err := driver.Start(r.ctx, r.task)
 	if err != nil {
-		wrapped := fmt.Errorf("failed to start task '%s' for alloc '%s': %v",
+		wrapped := fmt.Errorf("failed to start task %q for alloc %q: %v",
 			r.task.Name, r.alloc.ID, err)
 
 		r.logger.Printf("[WARN] client: %v", wrapped)

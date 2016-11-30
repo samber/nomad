@@ -71,10 +71,8 @@ type Driver interface {
 }
 
 // LogEventFn is a callback which allows the Prestart method on Drivers to emit
-// events during long running actions.
-// Errors returned by this function should be treated as a Prestart failure and
-// be returned by Prestart.
-type LogEventFn func(message string, args ...interface{}) error
+// events before performing long running actions.
+type LogEventFn func(message string, args ...interface{})
 
 // PrestartEvents are emitted by Driver Prestart methods and converted into
 // TaskEvents.
