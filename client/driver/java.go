@@ -39,6 +39,14 @@ const (
 type JavaDriver struct {
 	DriverContext
 	fingerprint.StaticFingerprinter
+
+	// State initialized by Prestart for use in Start
+	taskDir      string
+	absPath      string
+	args         []string
+	driverConfig JavaDriverConfig
+	pluginClient *plugin.Client
+	executor     executor.Executor
 }
 
 type JavaDriverConfig struct {
@@ -164,13 +172,8 @@ func (d *JavaDriver) Fingerprint(cfg *config.Config, node *structs.Node) (bool, 
 }
 
 func (d *JavaDriver) Prestart(ctx *ExecContext, emit LogEventFn, task *structs.Task) error {
-	panic("TODO")
-}
-
-func (d *JavaDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandle, error) {
-	var driverConfig JavaDriverConfig
-	if err := mapstructure.WeakDecode(task.Config, &driverConfig); err != nil {
-		return nil, err
+	if err := mapstructure.WeakDecode(task.Config, &d.driverConfig); err != nil {
+		return err
 	}
 
 	// Set the host environment variables.
@@ -179,29 +182,29 @@ func (d *JavaDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandle, 
 
 	taskDir, ok := ctx.AllocDir.TaskDirs[d.DriverContext.taskName]
 	if !ok {
-		return nil, fmt.Errorf("Could not find task directory for task: %v", d.DriverContext.taskName)
+		return fmt.Errorf("Could not find task directory for task: %v", d.DriverContext.taskName)
 	}
 
-	if driverConfig.JarPath == "" {
-		return nil, fmt.Errorf("jar_path must be specified")
+	if d.driverConfig.JarPath == "" {
+		return fmt.Errorf("jar_path must be specified")
 	}
 
 	args := []string{}
 	// Look for jvm options
-	if len(driverConfig.JvmOpts) != 0 {
-		d.logger.Printf("[DEBUG] driver.java: found JVM options: %s", driverConfig.JvmOpts)
-		args = append(args, driverConfig.JvmOpts...)
+	if len(d.driverConfig.JvmOpts) != 0 {
+		d.logger.Printf("[DEBUG] driver.java: found JVM options: %s", d.driverConfig.JvmOpts)
+		args = append(args, d.driverConfig.JvmOpts...)
 	}
 
 	// Build the argument list.
-	args = append(args, "-jar", driverConfig.JarPath)
-	if len(driverConfig.Args) != 0 {
-		args = append(args, driverConfig.Args...)
+	args = append(args, "-jar", d.driverConfig.JarPath)
+	if len(d.driverConfig.Args) != 0 {
+		args = append(args, d.driverConfig.Args...)
 	}
 
 	bin, err := discover.NomadExecutable()
 	if err != nil {
-		return nil, fmt.Errorf("unable to find the nomad binary: %v", err)
+		return fmt.Errorf("unable to find the nomad binary: %v", err)
 	}
 
 	pluginLogFile := filepath.Join(taskDir, fmt.Sprintf("%s-executor.out", task.Name))
@@ -211,7 +214,7 @@ func (d *JavaDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandle, 
 
 	execIntf, pluginClient, err := createExecutor(pluginConfig, d.config.LogOutput, d.config)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// Set the context
@@ -224,25 +227,35 @@ func (d *JavaDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandle, 
 		Task:      task,
 	}
 	if err := execIntf.SetContext(executorCtx); err != nil {
-		pluginClient.Kill()
-		return nil, fmt.Errorf("failed to set executor context: %v", err)
+		d.pluginClient.Kill()
+		return fmt.Errorf("failed to set executor context: %v", err)
 	}
 
 	absPath, err := GetAbsolutePath("java")
 	if err != nil {
-		return nil, err
+		return err
 	}
 
+	// Set state needed by Start()
+	d.taskDir = taskDir
+	d.absPath = absPath
+	d.args = args
+	d.pluginClient = pluginClient
+	d.executor = execIntf
+	return nil
+}
+
+func (d *JavaDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandle, error) {
 	execCmd := &executor.ExecCommand{
-		Cmd:            absPath,
-		Args:           args,
+		Cmd:            d.absPath,
+		Args:           d.args,
 		FSIsolation:    true,
 		ResourceLimits: true,
 		User:           getExecutorUser(task),
 	}
-	ps, err := execIntf.LaunchCmd(execCmd)
+	ps, err := d.executor.LaunchCmd(execCmd)
 	if err != nil {
-		pluginClient.Kill()
+		d.pluginClient.Kill()
 		return nil, err
 	}
 	d.logger.Printf("[DEBUG] driver.java: started process with pid: %v", ps.Pid)
@@ -250,11 +263,11 @@ func (d *JavaDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandle, 
 	// Return a driver handle
 	maxKill := d.DriverContext.config.MaxKillTimeout
 	h := &javaHandle{
-		pluginClient:    pluginClient,
-		executor:        execIntf,
+		pluginClient:    d.pluginClient,
+		executor:        d.executor,
 		userPid:         ps.Pid,
 		isolationConfig: ps.IsolationConfig,
-		taskDir:         taskDir,
+		taskDir:         d.taskDir,
 		allocDir:        ctx.AllocDir,
 		killTimeout:     GetKillTimeout(task.KillTimeout, maxKill),
 		maxKillTimeout:  maxKill,
