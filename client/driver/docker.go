@@ -81,6 +81,7 @@ const (
 type DockerDriver struct {
 	DriverContext
 
+	// State initialized by Prestart for use in Start
 	containerID  string
 	hostConfig   *docker.HostConfig
 	imageID      string
@@ -467,7 +468,7 @@ func (d *DockerDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandle
 		waitCh:         make(chan *dstructs.WaitResult, 1),
 	}
 
-	//TODO and move to task runner
+	//TODO move to task runner
 	if err := d.exec.SyncServices(consulContext(d.config, d.containerID)); err != nil {
 		d.logger.Printf("[ERR] driver.docker: error registering services with consul for task: %q: %v", task.Name, err)
 	}

@@ -38,6 +38,11 @@ const (
 type RawExecDriver struct {
 	DriverContext
 	fingerprint.StaticFingerprinter
+
+	// State initialized by Prestart for use in Start
+	driverConfig ExecDriverConfig
+	pluginClient *plugin.Client
+	executor     executor.Executor
 }
 
 // rawExecHandle is returned from Start/Open as a handle to the PID
@@ -108,25 +113,20 @@ func (d *RawExecDriver) Fingerprint(cfg *config.Config, node *structs.Node) (boo
 }
 
 func (d *RawExecDriver) Prestart(ctx *ExecContext, emit LogEventFn, task *structs.Task) error {
-	panic("TODO")
-}
-
-func (d *RawExecDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandle, error) {
-	var driverConfig ExecDriverConfig
-	if err := mapstructure.WeakDecode(task.Config, &driverConfig); err != nil {
-		return nil, err
+	if err := mapstructure.WeakDecode(task.Config, &d.driverConfig); err != nil {
+		return err
 	}
+
 	// Get the tasks local directory.
 	taskName := d.DriverContext.taskName
 	taskDir, ok := ctx.AllocDir.TaskDirs[taskName]
 	if !ok {
-		return nil, fmt.Errorf("Could not find task directory for task: %v", d.DriverContext.taskName)
+		return fmt.Errorf("Could not find task directory for task: %v", d.DriverContext.taskName)
 	}
 
 	// Get the command to be ran
-	command := driverConfig.Command
-	if err := validateCommand(command, "args"); err != nil {
-		return nil, err
+	if err := validateCommand(d.driverConfig.Command, "args"); err != nil {
+		return err
 	}
 
 	// Set the host environment variables.
@@ -135,7 +135,7 @@ func (d *RawExecDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandl
 
 	bin, err := discover.NomadExecutable()
 	if err != nil {
-		return nil, fmt.Errorf("unable to find the nomad binary: %v", err)
+		return fmt.Errorf("unable to find the nomad binary: %v", err)
 	}
 	pluginLogFile := filepath.Join(taskDir, fmt.Sprintf("%s-executor.out", task.Name))
 	pluginConfig := &plugin.ClientConfig{
@@ -144,7 +144,7 @@ func (d *RawExecDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandl
 
 	exec, pluginClient, err := createExecutor(pluginConfig, d.config.LogOutput, d.config)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	executorCtx := &executor.ExecutorContext{
 		TaskEnv:  d.taskEnv,
@@ -155,17 +155,24 @@ func (d *RawExecDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandl
 	}
 	if err := exec.SetContext(executorCtx); err != nil {
 		pluginClient.Kill()
-		return nil, fmt.Errorf("failed to set executor context: %v", err)
+		return fmt.Errorf("failed to set executor context: %v", err)
 	}
 
+	// Set state needed by Start()
+	d.pluginClient = pluginClient
+	d.executor = exec
+	return nil
+}
+
+func (d *RawExecDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandle, error) {
 	execCmd := &executor.ExecCommand{
-		Cmd:  command,
-		Args: driverConfig.Args,
+		Cmd:  d.driverConfig.Command,
+		Args: d.driverConfig.Args,
 		User: task.User,
 	}
-	ps, err := exec.LaunchCmd(execCmd)
+	ps, err := d.executor.LaunchCmd(execCmd)
 	if err != nil {
-		pluginClient.Kill()
+		d.pluginClient.Kill()
 		return nil, err
 	}
 	d.logger.Printf("[DEBUG] driver.raw_exec: started process with pid: %v", ps.Pid)
@@ -173,8 +180,8 @@ func (d *RawExecDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandl
 	// Return a driver handle
 	maxKill := d.DriverContext.config.MaxKillTimeout
 	h := &rawExecHandle{
-		pluginClient:   pluginClient,
-		executor:       exec,
+		pluginClient:   d.pluginClient,
+		executor:       d.executor,
 		userPid:        ps.Pid,
 		killTimeout:    GetKillTimeout(task.KillTimeout, maxKill),
 		maxKillTimeout: maxKill,
@@ -184,6 +191,8 @@ func (d *RawExecDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandl
 		doneCh:         make(chan struct{}),
 		waitCh:         make(chan *dstructs.WaitResult, 1),
 	}
+
+	//TODO move to task runner
 	if err := h.executor.SyncServices(consulContext(d.config, "")); err != nil {
 		h.logger.Printf("[ERR] driver.raw_exec: error registering services with consul for task: %q: %v", task.Name, err)
 	}

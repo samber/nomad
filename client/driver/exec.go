@@ -33,6 +33,11 @@ const (
 // features.
 type ExecDriver struct {
 	DriverContext
+
+	// State initialized by Prestart for use in Start
+	driverConfig ExecDriverConfig
+	pluginClient *plugin.Client
+	executor     executor.Executor
 }
 
 type ExecDriverConfig struct {
@@ -92,20 +97,14 @@ func (d *ExecDriver) Periodic() (bool, time.Duration) {
 	return true, 15 * time.Second
 }
 
-func (d *ExecDriver) Prestart(execctx *ExecContext, emit LogEventFn, task *structs.Task) error {
-	panic("TODO")
-}
-
-func (d *ExecDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandle, error) {
-	var driverConfig ExecDriverConfig
-	if err := mapstructure.WeakDecode(task.Config, &driverConfig); err != nil {
-		return nil, err
+func (d *ExecDriver) Prestart(ctx *ExecContext, _ LogEventFn, task *structs.Task) error {
+	if err := mapstructure.WeakDecode(task.Config, &d.driverConfig); err != nil {
+		return err
 	}
 
-	// Get the command to be ran
-	command := driverConfig.Command
-	if err := validateCommand(command, "args"); err != nil {
-		return nil, err
+	// Get the command to be run
+	if err := validateCommand(d.driverConfig.Command, "args"); err != nil {
+		return err
 	}
 
 	// Set the host environment variables.
@@ -115,12 +114,12 @@ func (d *ExecDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandle, 
 	// Get the task directory for storing the executor logs.
 	taskDir, ok := ctx.AllocDir.TaskDirs[d.DriverContext.taskName]
 	if !ok {
-		return nil, fmt.Errorf("Could not find task directory for task: %v", d.DriverContext.taskName)
+		return fmt.Errorf("Could not find task directory for task: %v", d.DriverContext.taskName)
 	}
 
 	bin, err := discover.NomadExecutable()
 	if err != nil {
-		return nil, fmt.Errorf("unable to find the nomad binary: %v", err)
+		return fmt.Errorf("unable to find the nomad binary: %v", err)
 	}
 	pluginLogFile := filepath.Join(taskDir, fmt.Sprintf("%s-executor.out", task.Name))
 	pluginConfig := &plugin.ClientConfig{
@@ -129,7 +128,7 @@ func (d *ExecDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandle, 
 
 	exec, pluginClient, err := createExecutor(pluginConfig, d.config.LogOutput, d.config)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	executorCtx := &executor.ExecutorContext{
 		TaskEnv:   d.taskEnv,
@@ -141,20 +140,27 @@ func (d *ExecDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandle, 
 	}
 	if err := exec.SetContext(executorCtx); err != nil {
 		pluginClient.Kill()
-		return nil, fmt.Errorf("failed to set executor context: %v", err)
+		return fmt.Errorf("failed to set executor context: %v", err)
 	}
 
+	// Set state needed by Start()
+	d.pluginClient = pluginClient
+	d.executor = exec
+	return nil
+}
+
+func (d *ExecDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandle, error) {
 	execCmd := &executor.ExecCommand{
-		Cmd:            command,
-		Args:           driverConfig.Args,
+		Cmd:            d.driverConfig.Command,
+		Args:           d.driverConfig.Args,
 		FSIsolation:    true,
 		ResourceLimits: true,
 		User:           getExecutorUser(task),
 	}
 
-	ps, err := exec.LaunchCmd(execCmd)
+	ps, err := d.executor.LaunchCmd(execCmd)
 	if err != nil {
-		pluginClient.Kill()
+		d.pluginClient.Kill()
 		return nil, err
 	}
 
@@ -163,9 +169,9 @@ func (d *ExecDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandle, 
 	// Return a driver handle
 	maxKill := d.DriverContext.config.MaxKillTimeout
 	h := &execHandle{
-		pluginClient:    pluginClient,
+		pluginClient:    d.pluginClient,
 		userPid:         ps.Pid,
-		executor:        exec,
+		executor:        d.executor,
 		allocDir:        ctx.AllocDir,
 		isolationConfig: ps.IsolationConfig,
 		killTimeout:     GetKillTimeout(task.KillTimeout, maxKill),
@@ -175,7 +181,9 @@ func (d *ExecDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandle, 
 		doneCh:          make(chan struct{}),
 		waitCh:          make(chan *dstructs.WaitResult, 1),
 	}
-	if err := exec.SyncServices(consulContext(d.config, "")); err != nil {
+
+	//TODO move to task runner
+	if err := d.executor.SyncServices(consulContext(d.config, "")); err != nil {
 		d.logger.Printf("[ERR] driver.exec: error registering services with consul for task: %q: %v", task.Name, err)
 	}
 	go h.run()
