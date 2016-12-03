@@ -257,15 +257,6 @@ func (e *UniversalExecutor) configureChroot() error {
 	return nil
 }
 
-// cleanTaskDir is an idempotent operation to clean the task directory and
-// should be called when tearing down the task.
-func (e *UniversalExecutor) removeChrootMounts() error {
-	// Prevent a race between Wait/ForceStop
-	e.resConCtx.cgLock.Lock()
-	defer e.resConCtx.cgLock.Unlock()
-	return e.ctx.AllocDir.UnmountAll()
-}
-
 // getAllPids returns the pids of all the processes spun up by the executor. We
 // use the libcontainer apis to get the pids when the user is using cgroup
 // isolation and we scan the entire process table if the user is not using any

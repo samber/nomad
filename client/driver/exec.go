@@ -289,16 +289,13 @@ func (h *execHandle) Kill() error {
 
 	select {
 	case <-h.doneCh:
-		return nil
 	case <-time.After(h.killTimeout):
 		if h.pluginClient.Exited() {
-			return nil
+			break
 		}
 		if err := h.executor.Exit(); err != nil {
 			return fmt.Errorf("executor Exit failed: %v", err)
 		}
-
-		return nil
 	}
 }
 
@@ -321,9 +318,6 @@ func (h *execHandle) run() {
 			if e := executor.ClientCleanup(h.isolationConfig, ePid); e != nil {
 				h.logger.Printf("[ERR] driver.exec: destroying resource container failed: %v", e)
 			}
-		}
-		if e := h.allocDir.UnmountAll(); e != nil {
-			h.logger.Printf("[ERR] driver.exec: unmounting dev,proc and alloc dirs failed: %v", e)
 		}
 	}
 

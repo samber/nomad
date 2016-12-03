@@ -94,10 +94,6 @@ type ExecutorContext struct {
 	// TaskEnv holds information about the environment of a Task
 	TaskEnv *env.TaskEnvironment
 
-	// AllocDir is the handle to do operations on the alloc dir of
-	// the task
-	AllocDir *allocdir.AllocDir
-
 	// Task is the task whose executor is being launched
 	Task *structs.Task
 
@@ -493,12 +489,6 @@ func (e *UniversalExecutor) Exit() error {
 
 	if e.command.ResourceLimits {
 		if err := e.resConCtx.executorCleanup(); err != nil {
-			merr.Errors = append(merr.Errors, err)
-		}
-	}
-
-	if e.command.FSIsolation {
-		if err := e.removeChrootMounts(); err != nil {
 			merr.Errors = append(merr.Errors, err)
 		}
 	}
