@@ -33,6 +33,10 @@ const (
 // features.
 type ExecDriver struct {
 	DriverContext
+
+	// Set by Prestart
+	driverConfig ExecDriverConfig
+	taskDir      string
 }
 
 type ExecDriverConfig struct {
@@ -92,36 +96,61 @@ func (d *ExecDriver) Periodic() (bool, time.Duration) {
 	return true, 15 * time.Second
 }
 
-func (d *ExecDriver) Prestart(execctx *ExecContext, task *structs.Task) error {
+func (d *ExecDriver) Prestart(ctx *ExecContext, task *structs.Task) error {
+	if err := mapstructure.WeakDecode(task.Config, &d.driverConfig); err != nil {
+		return err
+	}
+
 	// Set the host environment variables.
 	filter := strings.Split(d.config.ReadDefault("env.blacklist", config.DefaultEnvBlacklist), ",")
 	d.taskEnv.AppendHostEnvvars(filter)
+
+	// Build chroot
+	allocDir := ctx.AllocDir
+	if err := allocDir.MountSharedDir(task.Name); err != nil {
+		return err
+	}
+
+	//TODO move
+	chroot := executor.DefaultChrootEnv
+	if len(d.config.ChrootEnv) > 0 {
+		chroot = d.config.ChrootEnv
+	}
+
+	if err := allocDir.Embed(task.Name, chroot); err != nil {
+		return err
+	}
+
+	// Set the tasks AllocDir environment variable.
+	d.taskEnv.
+		SetAllocDir(filepath.Join("/", allocdir.SharedAllocName)).
+		SetTaskLocalDir(filepath.Join("/", allocdir.TaskLocal)).
+		SetSecretsDir(filepath.Join("/", allocdir.TaskSecrets))
+
+	taskDir, ok := allocDir.TaskDirs[task.Name]
+	if !ok {
+		return fmt.Errorf("Could not find task directory for task: %v", task.Name)
+	}
+	d.taskDir = taskDir
+
+	if err := allocDir.MountSpecialDirs(taskDir); err != nil {
+		return err
+	}
 	return nil
 }
 
 func (d *ExecDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandle, error) {
-	var driverConfig ExecDriverConfig
-	if err := mapstructure.WeakDecode(task.Config, &driverConfig); err != nil {
-		return nil, err
-	}
-
 	// Get the command to be ran
-	command := driverConfig.Command
+	command := d.driverConfig.Command
 	if err := validateCommand(command, "args"); err != nil {
 		return nil, err
-	}
-
-	// Get the task directory for storing the executor logs.
-	taskDir, ok := ctx.AllocDir.TaskDirs[d.DriverContext.taskName]
-	if !ok {
-		return nil, fmt.Errorf("Could not find task directory for task: %v", d.DriverContext.taskName)
 	}
 
 	bin, err := discover.NomadExecutable()
 	if err != nil {
 		return nil, fmt.Errorf("unable to find the nomad binary: %v", err)
 	}
-	pluginLogFile := filepath.Join(taskDir, fmt.Sprintf("%s-executor.out", task.Name))
+	pluginLogFile := filepath.Join(d.taskDir, fmt.Sprintf("%s-executor.out", task.Name))
 	pluginConfig := &plugin.ClientConfig{
 		Cmd: exec.Command(bin, "executor", pluginLogFile),
 	}
@@ -131,12 +160,12 @@ func (d *ExecDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandle, 
 		return nil, err
 	}
 	executorCtx := &executor.ExecutorContext{
-		TaskEnv:   d.taskEnv,
-		Driver:    "exec",
-		AllocDir:  ctx.AllocDir,
-		AllocID:   ctx.AllocID,
-		ChrootEnv: d.config.ChrootEnv,
-		Task:      task,
+		TaskEnv: d.taskEnv,
+		Driver:  "exec",
+		AllocID: ctx.AllocID,
+		LogDir:  ctx.AllocDir.LogDir(),
+		TaskDir: d.taskDir,
+		Task:    task,
 	}
 	if err := exec.SetContext(executorCtx); err != nil {
 		pluginClient.Kill()
@@ -145,7 +174,7 @@ func (d *ExecDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandle, 
 
 	execCmd := &executor.ExecCommand{
 		Cmd:            command,
-		Args:           driverConfig.Args,
+		Args:           d.driverConfig.Args,
 		FSIsolation:    true,
 		ResourceLimits: true,
 		User:           getExecutorUser(task),
@@ -297,6 +326,7 @@ func (h *execHandle) Kill() error {
 			return fmt.Errorf("executor Exit failed: %v", err)
 		}
 	}
+	return nil
 }
 
 func (h *execHandle) Stats() (*cstructs.TaskResourceUsage, error) {

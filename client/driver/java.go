@@ -215,12 +215,10 @@ func (d *JavaDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandle, 
 
 	// Set the context
 	executorCtx := &executor.ExecutorContext{
-		TaskEnv:   d.taskEnv,
-		Driver:    "java",
-		AllocDir:  ctx.AllocDir,
-		AllocID:   ctx.AllocID,
-		ChrootEnv: d.config.ChrootEnv,
-		Task:      task,
+		TaskEnv: d.taskEnv,
+		Driver:  "java",
+		AllocID: ctx.AllocID,
+		Task:    task,
 	}
 	if err := execIntf.SetContext(executorCtx); err != nil {
 		pluginClient.Kill()
@@ -395,6 +393,7 @@ func (h *javaHandle) Kill() error {
 		}
 
 	}
+	return nil
 }
 
 func (h *javaHandle) Stats() (*cstructs.TaskResourceUsage, error) {

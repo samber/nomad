@@ -252,11 +252,10 @@ func (d *QemuDriver) Start(ctx *ExecContext, task *structs.Task) (DriverHandle, 
 		return nil, err
 	}
 	executorCtx := &executor.ExecutorContext{
-		TaskEnv:  d.taskEnv,
-		Driver:   "qemu",
-		AllocDir: ctx.AllocDir,
-		AllocID:  ctx.AllocID,
-		Task:     task,
+		TaskEnv: d.taskEnv,
+		Driver:  "qemu",
+		AllocID: ctx.AllocID,
+		Task:    task,
 	}
 	if err := exec.SetContext(executorCtx); err != nil {
 		pluginClient.Kill()
