@@ -13,6 +13,7 @@ before_install:
     - mkdir -p /home/travis/gopath/src/github.com/hashicorp
 #    - ln -s /home/travis/gopath/src/github.com/samber/nomad /home/travis/gopath/src/github.com/hashicorp/nomad
     - mv /home/travis/gopath/src/github.com/samber /home/travis/gopath/src/github.com/hashicorp
+    - ls /home/travis/gopath/src/github.com/
     - cd /home/travis/gopath/src/github.com/hashicorp/nomad
     - sudo apt-get update
     - sudo apt-get install -y docker-engine liblxc1 lxc-dev lxc
