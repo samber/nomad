@@ -10,12 +10,6 @@ go:
   -  1.8
 
 before_install:
-    - mkdir -p /home/travis/gopath/src/github.com/hashicorp
-#    - ln -s /home/travis/gopath/src/github.com/samber/nomad /home/travis/gopath/src/github.com/hashicorp/nomad
-    - pwd
-    - mv /home/travis/gopath/src/github.com/samber /home/travis/gopath/src/github.com/hashicorp
-    - ls /home/travis/gopath/src/github.com/
-    - cd /home/travis/gopath/src/github.com/hashicorp/nomad
     - sudo apt-get update
     - sudo apt-get install -y docker-engine liblxc1 lxc-dev lxc
     - sudo apt-get install -y qemu
@@ -24,6 +18,10 @@ before_install:
     - ./scripts/install_vault.sh
 
 install:
+  - pwd
+  - ls /home/travis/gopath/src/github.com/
+  - mkdir -p /home/travis/gopath/src/github.com/
+  - mv /home/travis/gopath/src/github.com/samber /home/travis/gopath/src/github.com/hashicorp
   - cd /home/travis/gopath/src/github.com/hashicorp/nomad
   - pwd
   - make bootstrap
