@@ -9,11 +9,8 @@ language: go
 go:
   -  1.8
 
-branches:
-  only:
-    - master
-
 before_install:
+    - ln -s /home/travis/gopath/src/github.com/samber/nomad /home/travis/gopath/src/github.com/hashicorp/nomad
     - sudo apt-get update
     - sudo apt-get install -y docker-engine liblxc1 lxc-dev lxc
     - sudo apt-get install -y qemu
