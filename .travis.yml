@@ -27,4 +27,5 @@ install:
   - make bootstrap
 
 script:
+  - pwd
   - make travis
